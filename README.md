@@ -45,8 +45,8 @@ Contact
 The Astronomer CLI is maintained with love by the Astronomer team. To report a bug or suggest a change, reach out to our support.
 
 
-How to change
-=============
+How to Change Webserver Port
+============================
 
 In order to change airflow webserver port from 8080 intop 8081, enter this command: `astro config set webserver.port 8081`
 
