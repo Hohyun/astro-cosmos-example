@@ -1,0 +1,52 @@
+dbt_demo:
+  outputs:
+    dev:
+      dremio_space: '@user'
+      dremio_space_folder: no_schema
+      object_storage_path: datalake
+      object_storage_source: minio
+      password: 8HsVT83AdZNc2h3TkYrd
+      port: 9047
+      software_host: 10.90.65.61
+      threads: 1
+      type: dremio
+      use_ssl: false
+      user: hohyunkim
+  target: dev
+
+dbt_tutorial:
+  outputs:
+    dev:
+      type: duckdb
+      path: dev.duckdb
+      threads: 1
+
+    prod:
+      type: duckdb
+      path: prod.duckdb
+      threads: 4
+
+  target: dev
+
+jaffle_shop:
+  outputs:
+    dev:
+      type: duckdb
+      path: dev.jaffle_shop
+      threads: 1
+
+  target: dev
+
+dbt_tut:
+  outputs:
+    dev:
+      type: postgres
+      host: 10.90.65.61
+      port: 5432
+      user: postgres
+      password: LJ2008*
+      dbname: test
+      schema: public
+      threads: 1
+
+  target: dev
