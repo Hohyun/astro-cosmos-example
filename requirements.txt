@@ -5,10 +5,11 @@ apache-airflow-providers-apache-kafka
 apache-airflow-providers-postgres
 apache-airflow-providers-oracle
 apache-airflow-providers-google
-apache-airflow-providers-iceberg
+apache-airflow-providers-apache-iceberg
 apache-airflow-providers-trino
 airflow-provider-duckdb
+dremio-simple-query
 minio
-numpy
+nodejs
 pandas
 polars
