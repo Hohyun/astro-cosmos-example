@@ -97,7 +97,7 @@ FROM payt p
            FROM payt_txca
            WHERE tmft = 'YR'
            GROUP BY payt_sqnu) YR ON YR.payt_sqnu = p.sqnu        
-WHERE e.dais BETWEEN TO_DATE ('{start_date}', 'DD/MM/YYYY') AND TO_DATE ('{end_date}', 'DD/MM/YYYY')
+WHERE e.dais BETWEEN TO_DATE ('{start_date}', 'YYYY-MM-DD') AND TO_DATE ('{end_date}', 'YYYY-MM-DD')
 GROUP BY e.tdnr, 
 		 e.srci,
          p.peri,
@@ -168,7 +168,7 @@ FROM rmbt p
        FROM rmbt_txca
        WHERE tmft = 'YR'
        GROUP BY rmbt_id) YR ON YR.rmbt_id = p.sqnu        
-WHERE p.daut BETWEEN TO_DATE ('{start_date}', 'DD/MM/YYYY') AND TO_DATE ('{end_date}', 'DD/MM/YYYY')
+WHERE p.daut BETWEEN TO_DATE ('{start_date}', 'YYYY-MM-DD') AND TO_DATE ('{end_date}', 'YYYY-MM-DD')
 GROUP BY p.utnr, 
          p.srci,
          p.peri,

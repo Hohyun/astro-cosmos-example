@@ -1,50 +1,31 @@
-from airflow.sdk import dag, task
-from pendulum import datetime
+from airflow.sdk import dag, DAG
 from datetime import datetime, timedelta
-from minio import Minio
-import polars as pl
-import sqlalchemy
+from airflow.providers.amazon.aws.transfer.sql_to_s3 import SqlToS3Operator
 import os
 import logging
 import dotenv
-import oracledb
 
 dotenv.load_dotenv()
+logging.basicConfig(level=logging.INFO)
 
-@dag(
+with DAG (
     start_date=datetime(2025, 8, 27),
     schedule='0 13 * * 3',
     catchup=False,
     tags=["datalake", "sales"],
-)
-def sales_data_download():
-
-    logging.basicConfig(level=logging.INFO)
+) as dag:
 
     start_time = datetime.now()
     logging.info(f"Start Time: {start_time}")
 
     # Wednesday of the last week ~ Tuesday of this week 
-    last_wed = (datetime.now() - timedelta(days=(datetime.now().weekday() - 2) % 7 + 7)).date()
+    last_wed = (datetime.now() - timedelta(days=(datetime.now().weekday() - 2) % 7 + 14)).date()
     this_tue = last_wed + timedelta(days=6)
     start_date = os.getenv("START_DATE", last_wed.strftime('%Y-%m-%d'))
     end_date = os.getenv("END_DATE", this_tue.strftime('%Y-%m-%d'))
     logging.info(f"Start Date: {start_date}, End Date: {end_date}")
 
-    @task()  
-    def get_sales_data(**context) -> None:
-        """
-        This task uses the requests library to retrieve a list of Astronauts
-        currently in space. The results are pushed to XCom with a specific key
-        so they can be used in a downstream pipeline. The task returns a list
-        of Astronauts to be used in the next task.
-        """
-
-        try:
-            conn_string = 'oracle+oracledb://jinair_read:hDtxZgzrfgXCtPv2QmEH@lj.db.rep.mrva.io:1521/ORCL'
-            engine = sqlalchemy.create_engine(conn_string)
-
-            query = f"""
+    query = f"""
 SELECT 'Sale' "Type",
 		e.tdnr "TDNR",
         e.srci "Source",
@@ -189,31 +170,15 @@ GROUP BY p.utnr,
          p.cutp
 order by 1 DESC
 		"""
-		    # df = pd.read_sql(query, con=engine)	
-            df = pl.read_database(query, connection=engine.connect())
-            df.write_parquet("/tmp/sales_refund.parquet")
-        except Exception as e:
-            logging.error(f"Error occurred: {e}")
-            raise
+    sql_to_s3_task = SqlToS3Operator(
+        task_id="sql_to_s3_sales_refund_task",
+        sql_conn_id="oracle_default",
+        query=query,
+        aws_conn_id="aws_default",
+        s3_bucket="datalake",
+        s3_key=f"sales/sales_refund_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet",
+        replace=True,
+    )
 
-    @task
-    def upload_file_to_minio(bucket_name, object_name, file_name) -> None:
-        client = Minio(
-            "10.90.65.61:9000",
-            access_key="X6I698S1TZ4N791O9PK2",
-            secret_key="nSd6SEEMxVrI5IdD06itUMGt+44StxTiz5i7uVpa",
-            secure=False,  # Set to True if using HTTPS
-        )
+    sql_to_s3_task
 
-        with open(file_name, "rb") as file_data:
-            result = client.put_object(bucket_name, object_name, file_data, os.path.getsize(file_name))
-            logging.info(
-                "created {0} object; etag: {1}, version-id: {2}".format(
-                    result.object_name, result.etag, result.version_id,
-            ),
-        )
-
-    get_sales_data() >> upload_file_to_minio("datalake", f"sales/sales_refund_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet", "/tmp/sales_refund.parquet")    
-
-# Instantiate the DAG
-sales_data_download()

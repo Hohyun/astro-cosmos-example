@@ -4,15 +4,10 @@ apache-airflow-providers-common-sql
 apache-airflow-providers-apache-kafka
 apache-airflow-providers-postgres
 apache-airflow-providers-oracle
+apache-airflow-providers-amazon
 apache-airflow-providers-apache-iceberg
 apache-airflow-providers-trino
 airflow-provider-duckdb
 dremio-simple-query
-oracledb
-connectorx
-minio
 nodejs
-pandas
-polars
-duckdb
 python-dotenv
