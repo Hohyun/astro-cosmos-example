@@ -10,9 +10,9 @@ airflow-provider-duckdb
 dremio-simple-query
 oracledb
 connectorx
-sqlalchemy
 minio
 nodejs
 pandas
 polars
+duckdb
 python-dotenv
