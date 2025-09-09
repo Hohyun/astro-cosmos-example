@@ -9,5 +9,6 @@ apache-airflow-providers-apache-iceberg
 apache-airflow-providers-trino
 airflow-provider-duckdb
 dremio-simple-query
-nodejs
 python-dotenv
+oracledb
+nodejs

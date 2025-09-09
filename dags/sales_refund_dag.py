@@ -1,36 +1,58 @@
 from airflow.sdk import dag, DAG
 from datetime import datetime, timedelta
-from airflow.providers.amazon.aws.transfer.sql_to_s3 import SqlToS3Operator
+import pendulum
+from airflow.providers.amazon.aws.transfers.sql_to_s3 import SqlToS3Operator
+from airflow.operators.python import PythonOperator
+from dremio_simple_query.connect import DremioConnection
 import os
 import logging
 import dotenv
 
 dotenv.load_dotenv()
 logging.basicConfig(level=logging.INFO)
+local_tz = pendulum.timezone("Asia/Seoul")
+
+def copy_data_to_dremio(s3_file_key:str):
+    token = "dg11j87s165ecljmsb4qclthct"
+    uri = "grpc://host.docker.internal:32010"
+    dremio = DremioConnection(token, uri)
+    sql = f"""
+COPY INTO icerberg.sales_refund
+FROM '@minio/datalake/{s3_file_key}'
+FILE_FORMAT 'parquet' 
+"""
+    _ = dremio.toArrow(sql)
+
 
 with DAG (
-    start_date=datetime(2025, 8, 27),
+    dag_id="sales_refund_dag",
+    start_date=datetime(2025, 8, 27, tzinfo=local_tz),
     schedule='0 13 * * 3',
     catchup=False,
     tags=["datalake", "sales"],
 ) as dag:
 
-    start_time = datetime.now()
-    logging.info(f"Start Time: {start_time}")
+    # set environment variables for start_date and end_date if needed
+    # os.environ["START_DATE"] = ""
+    # os.environ["END_DATE"] = ""
 
     # Wednesday of the last week ~ Tuesday of this week 
-    last_wed = (datetime.now() - timedelta(days=(datetime.now().weekday() - 2) % 7 + 14)).date()
+    week_delta = 1
+    last_wed = (datetime.now() - timedelta(days=(datetime.now().weekday() - 2) % 7 + 7 * week_delta)).date()
     this_tue = last_wed + timedelta(days=6)
     start_date = os.getenv("START_DATE", last_wed.strftime('%Y-%m-%d'))
     end_date = os.getenv("END_DATE", this_tue.strftime('%Y-%m-%d'))
+
     logging.info(f"Start Date: {start_date}, End Date: {end_date}")
+
+    s3_bucket_name = "datalake"
+    s3_file_key = f"sales/sales_refund_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
 
     query = f"""
 SELECT 'Sale' "Type",
-		e.tdnr "TDNR",
         e.srci "Source",
         p.peri "RptPeriod",
-        e.dais "TrxDate",
+        TO_CHAR(e.dais, 'YYYY-MM-DD') "TrxDate",
         frck.dom_int_uu (p.tdnr, t.isoc, 'Y') "DomInt",
         p.fptp "FOP",
         p.cuop "CCY",
@@ -87,9 +109,8 @@ FROM payt p
            FROM payt_txca
            WHERE tmft = 'YR'
            GROUP BY payt_sqnu) YR ON YR.payt_sqnu = p.sqnu        
-WHERE e.dais BETWEEN TO_DATE ('{start_date}', 'DD/MM/YYYY') AND TO_DATE ('{end_date}', 'DD/MM/YYYY')
-GROUP BY e.tdnr, 
-		 e.srci,
+WHERE e.dais BETWEEN TO_DATE ('{start_date}', 'YYYY-MM-DD') AND TO_DATE ('{end_date}', 'YYYY-MM-DD')
+GROUP BY e.srci,
          p.peri,
          e.dais,
          t.isoc,
@@ -99,10 +120,9 @@ GROUP BY e.tdnr,
          p.cuop        
 UNION
 SELECT 'Refund' "Type",
-		p.utnr "TDNR",
         srci "Source",
         p.peri "Period",
-        p.daut "TrxDate",
+        TO_CHAR(p.daut, 'YYYY-MM-DD') "TrxDate",
         frck.dom_int_uu (p.utnr, t.isoc , 'Y') "DomInt",
         p.fptp "FOP",
         p.cutp "CCY",
@@ -158,9 +178,8 @@ FROM rmbt p
        FROM rmbt_txca
        WHERE tmft = 'YR'
        GROUP BY rmbt_id) YR ON YR.rmbt_id = p.sqnu        
-WHERE p.daut BETWEEN TO_DATE ('{start_date}', 'DD/MM/YYYY') AND TO_DATE ('{end_date}', 'DD/MM/YYYY')
-GROUP BY p.utnr, 
-         p.srci,
+WHERE p.daut BETWEEN TO_DATE ('{start_date}', 'YYYY-MM-DD') AND TO_DATE ('{end_date}', 'YYYY-MM-DD')
+GROUP BY p.srci,
          p.peri,
          p.daut,
          t.isoc,
@@ -174,11 +193,19 @@ order by 1 DESC
         task_id="sql_to_s3_sales_refund_task",
         sql_conn_id="oracle_default",
         query=query,
-        aws_conn_id="aws_default",
-        s3_bucket="datalake",
-        s3_key=f"sales/sales_refund_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet",
+        aws_conn_id="minio_default",
+        s3_bucket=s3_bucket_name,
+        s3_key=s3_file_key,
+        file_format="parquet",
         replace=True,
     )
 
-    sql_to_s3_task
+    run_dremio_copy_task = PythonOperator(
+        task_id="run_dremio_copy_data_task",
+        python_callable=copy_data_to_dremio,
+        op_args=[s3_file_key],
+    )
+
+    sql_to_s3_task >> run_dremio_copy_task
+
 

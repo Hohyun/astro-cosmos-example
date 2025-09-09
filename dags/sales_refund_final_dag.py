@@ -1,46 +1,69 @@
-# import pandas as pd
+from airflow.sdk import dag, DAG
 from datetime import datetime, timedelta
+import pendulum
+from airflow.providers.amazon.aws.transfers.sql_to_s3 import SqlToS3Operator
+from airflow.operators.python import PythonOperator
+from dremio_simple_query.connect import DremioConnection
 import os
-from flask import ctx
-import polars as pl
-import sqlalchemy
-from minio import Minio
-import io
 import logging
 import dotenv
 
 dotenv.load_dotenv()
-
 logging.basicConfig(level=logging.INFO)
+local_tz = pendulum.timezone("Asia/Seoul")
 
-## Prerequisites
-# - Install the required packages:
-#   - polars
-#   - pandas
-#   - sqlalchemy
-#   - oracledb
-#   - minio
+def delete_exist_data(start_date:str, end_date:str):
+    token = "dg11j87s165ecljmsb4qclthct"
+    uri = "grpc://host.docker.internal:32010"
+    dremio = DremioConnection(token, uri)
+    sql = f"""
+    DELETE FROM icerberg.sales_refund
+    WHERE TrxDate BETWEEN '{start_date}' AND '{end_date}'
+    """
+    dremio.query(sql)
+    logging.info(f"Deleted existing data for {start_date} ~ {end_date} from sales_refund table.")   
 
-def main():
-	# check running time
-	start_time = datetime.now()
-	logging.info(f"Start Time: {start_time}")
+def copy_data_to_dremio(s3_file_key:str):
+    token = "dg11j87s165ecljmsb4qclthct"
+    uri = "grpc://host.docker.internal:32010"
+    dremio = DremioConnection(token, uri)
+    sql = f"""
+COPY INTO icerberg.sales_refund
+FROM '@minio/datalake/{s3_file_key}'
+FILE_FORMAT 'parquet' 
+"""
+    _ = dremio.toArrow(sql)
+    logging.info(f"Copied data from {s3_file_key} to sales_refund table.")
 
-	# Wednesday of the last week ~ Tuesday of this week 
-	last_wed = (datetime.now() - timedelta(days=(datetime.now().weekday() - 2) % 7 + 7)).date()
-	this_tue = last_wed + timedelta(days=6)
-	start_date = os.getenv("START_DATE", last_wed.strftime('%Y-%m-%d'))
-	end_date = os.getenv("END_DATE", this_tue.strftime('%Y-%m-%d'))
-	logging.info(f"Start Date: {start_date}, End Date: {end_date}")
+with DAG (
+    dag_id="sales_refund_final_dag",
+    start_date=datetime(2025, 8, 27, tzinfo=local_tz),
+    schedule='0 1 6 * *',  # At 01:00 on day-of-month 8
+    catchup=False,
+    tags=["datalake", "sales"],
+) as dag:
 
-	try:
-		conn_string = 'oracle+oracledb://jinair_read:hDtxZgzrfgXCtPv2QmEH@lj.db.rep.mrva.io:1521/ORCL'
-		engine = sqlalchemy.create_engine(conn_string)
-		query = f"""
+    # set environment variables for start_date and end_date if needed
+    # os.environ["START_DATE"] = ""
+    # os.environ["END_DATE"] = ""
+
+    # First day of the last month ~ Last day of the last month
+    first_day_of_last_month = (datetime.now().replace(day=1) - timedelta(days=1)).replace(day=1).date()
+    last_day_of_last_month = (datetime.now().replace(day=1) - timedelta(days=1)).date()
+
+    start_date = os.getenv("START_DATE", first_day_of_last_month.strftime('%Y-%m-%d'))
+    end_date = os.getenv("END_DATE", last_day_of_last_month.strftime('%Y-%m-%d'))
+
+    logging.info(f"Start Date: {start_date}, End Date: {end_date}")
+
+    s3_bucket_name = "datalake"
+    s3_file_key = f"sales/sales_refund_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet"
+
+    query = f"""
 SELECT 'Sale' "Type",
-		    e.srci "Source",
+        e.srci "Source",
         p.peri "RptPeriod",
-        e.dais "TrxDate",
+        TO_CHAR(e.dais, 'YYYY-MM-DD') "TrxDate",
         frck.dom_int_uu (p.tdnr, t.isoc, 'Y') "DomInt",
         p.fptp "FOP",
         p.cuop "CCY",
@@ -108,9 +131,9 @@ GROUP BY e.srci,
          p.cuop        
 UNION
 SELECT 'Refund' "Type",
-		    srci "Source",
+        srci "Source",
         p.peri "Period",
-        p.daut "TrxDate",
+        TO_CHAR(p.daut, 'YYYY-MM-DD') "TrxDate",
         frck.dom_int_uu (p.utnr, t.isoc , 'Y') "DomInt",
         p.fptp "FOP",
         p.cutp "CCY",
@@ -177,68 +200,29 @@ GROUP BY p.srci,
          p.cutp
 order by 1 DESC
 		"""
+    sql_to_s3_task = SqlToS3Operator(
+        task_id="sql_to_s3_sales_refund_task",
+        sql_conn_id="oracle_default",
+        query=query,
+        aws_conn_id="minio_default",
+        s3_bucket=s3_bucket_name,
+        s3_key=s3_file_key,
+        file_format="parquet",
+        replace=True,
+    )
 
-		df = pl.read_database(query, connection=engine.connect())
-		print(df)
-		df.write_parquet("/tmp/sales_refund.parquet")
+    run_dremio_delete_task = PythonOperator(
+        task_id="run_dremio_delete_data_task",
+        python_callable=delete_exist_data,
+        op_args=[start_date, end_date],
+    )
 
-		upload_file_to_minio("datalake", f"sales/sales_refund_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet", "/tmp/sales_refund.parquet")
+    run_dremio_copy_task = PythonOperator(
+        task_id="run_dremio_copy_data_task",
+        python_callable=copy_data_to_dremio,
+        op_args=[s3_file_key],
+    )
 
-	except Exception as e:
-		print(f"Error occurred:, {e}")
-
-	end_time = datetime.now()
-	logging.info(f"End Time: {end_time}, Elapsed Time: {end_time - start_time}")
-
-
-def read_parquet_from_minio(bucket_name, object_name):
-	"""
-	Read a Parquet file from MinIO and return a Polars DataFrame.
-	"""
-	client = Minio(
-	"10.90.65.61:9000",
-	access_key="X6I698S1TZ4N791O9PK2",
-	secret_key="nSd6SEEMxVrI5IdD06itUMGt+44StxTiz5i7uVpa",
-	secure=False,  # Set to True if using HTTPS
-)
-	response = client.get_object(bucket_name, object_name)
-
-	# Read the file content into a Polars DataFrame
-	data = io.BytesIO(response.read())
-	df = pl.read_parquet(data)
-	return df
-
-def upload_file_to_minio(bucket_name, object_name, file_name):
-	client = Minio(
-		"10.90.65.61:9000",
-		access_key="X6I698S1TZ4N791O9PK2",
-		secret_key="nSd6SEEMxVrI5IdD06itUMGt+44StxTiz5i7uVpa",
-		secure=False,  # Set to True if using HTTPS
-	)
-
-	with open(file_name, "rb") as file_data:
-		result = client.put_object(bucket_name, object_name, file_data, os.path.getsize(file_name))
-		logging.info(
-			"created {0} object; etag: {1}, version-id: {2}".format(
-				result.object_name, result.etag, result.version_id,
-    	),
-)
+    run_dremio_delete_task >> sql_to_s3_task >> run_dremio_copy_task
 
 
-def test():
-	# upload_file_to_minio("datalake", "sales/sales_refund_20250813_20250819.parquet", "sales_refund_20250813_20250819.parquet")
-	# df = read_parquet_from_minio("datalake", "sales/sales_refund_20250813_20250819.parquet")
-	# print(df)
-
-  sales_refund = pl.read_parquet("C:/Users/jinair/Downloads/sales_refund_20250820_20250826.parquet")
-  ctx = pl.SQLContext(sales_refund = sales_refund)
-  query = """
-      SELECT sum(DiscFareNetVAT_COA) net
-      FROM sales_refund
-      """
-  result = ctx.execute(query)
-  print(result)
-
-if __name__ == "__main__":
-	# main()	
-	test()
