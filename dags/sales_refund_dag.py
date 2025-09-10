@@ -22,12 +22,13 @@ FROM '@minio/datalake/{s3_file_key}'
 FILE_FORMAT 'parquet' 
 """
     _ = dremio.toArrow(sql)
+    logging.info(f"Copied data from {s3_file_key} to sales_refund table.")
 
 
 with DAG (
     dag_id="sales_refund_dag",
     start_date=datetime(2025, 8, 27, tzinfo=local_tz),
-    schedule='0 13 * * 3',
+    schedule='30 13 * * 3',
     catchup=False,
     tags=["datalake", "sales"],
 ) as dag:

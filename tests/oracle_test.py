@@ -1,7 +1,6 @@
 # import pandas as pd
 from datetime import datetime, timedelta
 import os
-from flask import ctx
 import polars as pl
 import sqlalchemy
 from minio import Minio
@@ -180,9 +179,9 @@ order by 1 DESC
 
 		df = pl.read_database(query, connection=engine.connect())
 		print(df)
-		df.write_parquet("/tmp/sales_refund.parquet")
+		df.write_parquet("sales_refund_test.parquet")
 
-		upload_file_to_minio("datalake", f"sales/sales_refund_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet", "/tmp/sales_refund.parquet")
+		upload_file_to_minio("datalake", f"sales/sales_refund_test_{start_date.replace('-', '')}_{end_date.replace('-', '')}.parquet", "sales_refund_test.parquet")
 
 	except Exception as e:
 		print(f"Error occurred:, {e}")
@@ -240,5 +239,5 @@ def test():
   print(result)
 
 if __name__ == "__main__":
-	# main()	
-	test()
+	main()	
+	# test()
