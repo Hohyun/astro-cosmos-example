@@ -23,6 +23,14 @@ def delete_exist_data(start_date:str, end_date:str):
     dremio.query(sql)
     logging.info(f"Deleted existing data for {start_date} ~ {end_date} from sales_refund table.")   
 
+    sql = f"""
+    DELETE FROM icerberg.sales_temp
+    WHERE TrxDate BETWEEN '{start_date}' AND '{end_date}'
+    """
+    dremio.query(sql)
+    logging.info(f"Deleted existing data for {start_date} ~ {end_date} from sales_temp table.")
+
+
 def copy_data_to_dremio(s3_file_key:str):
     token = "dg11j87s165ecljmsb4qclthct"
     uri = "grpc://host.docker.internal:32010"
