@@ -1,55 +1,42 @@
-from airflow.sdk import dag, DAG
+from airflow.sdk import DAG
 from datetime import datetime, timedelta
 import pendulum
 from airflow.providers.amazon.aws.transfers.sql_to_s3 import SqlToS3Operator
 from airflow.operators.python import PythonOperator
-from dremio_simple_query.connect import DremioConnection
+from dremio_simple_query.connect import get_token, DremioConnection
 import os
 import logging
 import dotenv
+from airflow.decorators import dag, task
 
 dotenv.load_dotenv()
 logging.basicConfig(level=logging.INFO)
 local_tz = pendulum.timezone("Asia/Seoul")
 
-def delete_exist_data(start_date:str, end_date:str):
-    token = "dg11j87s165ecljmsb4qclthct"
+def get_dremio_connection() -> DremioConnection:
+    login_endpoint = "http://host.docker.internal:9047/apiv2/login"
+
+    payload = {
+        "userName": "hohyunkim",
+        "password": "8HsVT83AdZNc2h3TkYrd"
+    }
+
+    token = get_token(uri = login_endpoint, payload=payload)
+    print(token)
+
     uri = "grpc://host.docker.internal:32010"
     dremio = DremioConnection(token, uri)
-    sql = f"""
-    DELETE FROM icerberg.sales_refund
-    WHERE TrxDate BETWEEN '{start_date}' AND '{end_date}'
-    """
-    dremio.query(sql)
-    logging.info(f"Deleted existing data for {start_date} ~ {end_date} from sales_refund table.")   
-
-    sql = f"""
-    DELETE FROM icerberg.sales_temp
-    WHERE TrxDate BETWEEN '{start_date}' AND '{end_date}'
-    """
-    dremio.query(sql)
-    logging.info(f"Deleted existing data for {start_date} ~ {end_date} from sales_temp table.")
+    return dremio
 
 
-def copy_data_to_dremio(s3_file_key:str):
-    token = "dg11j87s165ecljmsb4qclthct"
-    uri = "grpc://host.docker.internal:32010"
-    dremio = DremioConnection(token, uri)
-    sql = f"""
-COPY INTO icerberg.sales_refund
-FROM '@minio/datalake/{s3_file_key}'
-FILE_FORMAT 'parquet' 
-"""
-    _ = dremio.toArrow(sql)
-    logging.info(f"Copied data from {s3_file_key} to sales_refund table.")
-
-with DAG (
+@dag (
     dag_id="sales_refund_final_dag",
     start_date=datetime(2025, 8, 27, tzinfo=local_tz),
     schedule='0 1 6 * *',  # At 01:00 on day-of-month 8
     catchup=False,
     tags=["datalake", "sales"],
-) as dag:
+)
+def sales_refund_final_dag():
 
     # set environment variables for start_date and end_date if needed
     # os.environ["START_DATE"] = ""
@@ -219,18 +206,50 @@ order by 1 DESC
         replace=True,
     )
 
-    run_dremio_delete_task = PythonOperator(
-        task_id="run_dremio_delete_data_task",
-        python_callable=delete_exist_data,
-        op_args=[start_date, end_date],
-    )
+    @task
+    def delete_exist_data():
+        dremio = get_dremio_connection()
 
-    run_dremio_copy_task = PythonOperator(
-        task_id="run_dremio_copy_data_task",
-        python_callable=copy_data_to_dremio,
-        op_args=[s3_file_key],
-    )
+        sql = f"""
+        DELETE FROM icerberg.sales_refund
+        WHERE TrxDate BETWEEN '{start_date}' AND '{end_date}'
+        """
+        logging.info(sql)
+        dremio.query(sql)
+        logging.info(f"Deleted existing data for {start_date} ~ {end_date} from sales_refund table.")   
 
-    run_dremio_delete_task >> sql_to_s3_task >> run_dremio_copy_task
+        sql = f"""
+        DELETE FROM icerberg.sales_temp
+        WHERE TrxDate BETWEEN '{start_date}' AND '{end_date}'
+        """
+        logging.info(sql)
+        dremio.query(sql)
+        logging.info(f"Deleted existing data for {start_date} ~ {end_date} from sales_temp table.")
 
+    # run_dremio_delete_task = PythonOperator(
+    #     task_id="run_dremio_delete_data_task",
+    #     python_callable=delete_exist_data,
+    #     op_args=[start_date, end_date],
+    # )
 
+    # run_dremio_copy_task = PythonOperator(
+    #     task_id="run_dremio_copy_data_task",
+    #     python_callable=copy_data_to_dremio,
+    #     op_args=[s3_file_key],
+    # )
+
+    @task
+    def copy_data_to_dremio():
+        dremio = get_dremio_connection()
+        sql = f"""
+        COPY INTO icerberg.sales_refund
+        FROM '@minio/datalake/{s3_file_key}'
+        FILE_FORMAT 'parquet' 
+        """
+        _ = dremio.toArrow(sql)
+        logging.info(f"Copied data from {s3_file_key} to sales_refund table.")
+
+    # run_dremio_delete_task >> sql_to_s3_task >> run_dremio_copy_task
+    delete_exist_data() >> sql_to_s3_task >> copy_data_to_dremio()
+
+sales_refund_final_dag()
