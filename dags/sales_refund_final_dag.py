@@ -206,31 +206,31 @@ order by 1 DESC
         replace=True,
     )
 
-    @task
-    def delete_exist_data():
-        dremio = get_dremio_connection()
-
-        sql = f"""
-        DELETE FROM icerberg.sales_refund
-        WHERE TrxDate BETWEEN '{start_date}' AND '{end_date}'
-        """
-        logging.info(sql)
-        dremio.query(sql)
-        logging.info(f"Deleted existing data for {start_date} ~ {end_date} from sales_refund table.")   
-
-        sql = f"""
-        DELETE FROM icerberg.sales_temp
-        WHERE TrxDate BETWEEN '{start_date}' AND '{end_date}'
-        """
-        logging.info(sql)
-        dremio.query(sql)
-        logging.info(f"Deleted existing data for {start_date} ~ {end_date} from sales_temp table.")
-
     # run_dremio_delete_task = PythonOperator(
     #     task_id="run_dremio_delete_data_task",
     #     python_callable=delete_exist_data,
     #     op_args=[start_date, end_date],
     # )
+
+    @task
+    def delete_exist_data():
+        dremio = get_dremio_connection()
+
+        sql = f"""
+        DELETE FROM iceberg.ra.sales_result
+        WHERE TrxDate BETWEEN '{start_date}' AND '{end_date}'
+        """
+        logging.info(sql)
+        dremio.query(sql)
+        logging.info(f"Deleted existing data for {start_date} ~ {end_date} from sales_result table.")
+
+        sql = f"""
+        DELETE FROM iceberg.ra.sales_recent
+        WHERE TrxDate BETWEEN '{start_date}' AND '{end_date}'
+        """
+        logging.info(sql)
+        dremio.query(sql)
+        logging.info(f"Deleted existing data for {start_date} ~ {end_date} from sales_recent table.")
 
     # run_dremio_copy_task = PythonOperator(
     #     task_id="run_dremio_copy_data_task",
@@ -242,12 +242,12 @@ order by 1 DESC
     def copy_data_to_dremio():
         dremio = get_dremio_connection()
         sql = f"""
-        COPY INTO icerberg.sales_refund
+        COPY INTO iceberg.ra.sales_result
         FROM '@minio/datalake/{s3_file_key}'
         FILE_FORMAT 'parquet' 
         """
         _ = dremio.toArrow(sql)
-        logging.info(f"Copied data from {s3_file_key} to sales_refund table.")
+        logging.info(f"Copied data from {s3_file_key} to sales_result table.")
 
     # run_dremio_delete_task >> sql_to_s3_task >> run_dremio_copy_task
     delete_exist_data() >> sql_to_s3_task >> copy_data_to_dremio()

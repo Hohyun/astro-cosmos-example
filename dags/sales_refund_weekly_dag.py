@@ -11,17 +11,17 @@ logging.basicConfig(level=logging.INFO)
 local_tz = pendulum.timezone("Asia/Seoul")
 
 @dag (
-    dag_id="weekly_sales_result_dag",
-    start_date=datetime(2025, 9, 10, tzinfo=local_tz),
-    schedule='30 13 * * 3',
+    dag_id="sales_refund_weekly_dag",
+    start_date=datetime(2025, 9, 22, tzinfo=local_tz),
+    schedule='30 14 * * 3',
     catchup=False,
     tags=["datalake", "sales"],
 ) 
-def weekly_sales_result_dag():
+def sales_refund_weekly_dag():
 
     # set environment variables for start_date and end_date if needed
-    os.environ["START_DATE"] = "2025-09-01"
-    os.environ["END_DATE"] = "2025-09-09"
+    # os.environ["START_DATE"] = "2025-09-01"
+    # os.environ["END_DATE"] = "2025-09-09"
 
     # Wednesday of the last week ~ Tuesday of this week 
     last_wed = (datetime.now() - timedelta(days=(datetime.now().weekday() - 2) % 7 + 7)).date()
@@ -29,7 +29,7 @@ def weekly_sales_result_dag():
     start_date = os.getenv("START_DATE", last_wed.strftime('%Y-%m-%d'))
     end_date = os.getenv("END_DATE", this_tue.strftime('%Y-%m-%d'))
 
-    s3_file_key = f"sales/sales_result_{start_date.replace('-', '')}_{end_date.replace('-', '')}.csv"
+    s3_file_key = f"sales/sales_recent_{start_date.replace('-', '')}_{end_date.replace('-', '')}.csv"
     logging.info(f"Start Date: {start_date}, End Date: {end_date}")
     logging.info(f"S3 File Key: {s3_file_key}")
 
@@ -48,7 +48,7 @@ def weekly_sales_result_dag():
         uri = "grpc://host.docker.internal:32010"
         dremio = DremioConnection(token, uri)
         sql = f"""
-    COPY INTO icerberg.sales_temp
+    COPY INTO iceberg.ra.sales_recent
     FROM '@minio/datalake/{s3_file_key}'
     FILE_FORMAT 'csv'
     ( FIELD_DELIMITER ';', DATE_FORMAT 'YYYY-MM-DD' )
@@ -56,9 +56,9 @@ def weekly_sales_result_dag():
         logging.info(sql)
 
         _ = dremio.toArrow(sql)
-        logging.info(f"Copied data from {s3_file_key} to sales_temp table.")
+        logging.info(f"Copied data from {s3_file_key} to sales_recent table.")
 
     copy_data_to_dremio(s3_file_key)
 
-weekly_sales_result_dag()
+sales_refund_weekly_dag()
 
